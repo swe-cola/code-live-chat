@@ -1,0 +1,29 @@
+{
+  "name": "code-live-chat",
+  "version": "0.1.0",
+  "description": "Chat service used in CodeLive",
+  "main": "index.ts",
+  "scripts": {
+    "start": "nodemon --exec ts-node src/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swe-cola/code-live-chat.git"
+  },
+  "author": "Semin Park",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/swe-cola/code-live-chat/issues"
+  },
+  "homepage": "https://github.com/swe-cola/code-live-chat#readme",
+  "devDependencies": {
+    "express": "^4.17.1",
+    "nodemon": "^2.0.6",
+    "ts-node": "^9.0.0",
+    "typescript": "^4.0.5"
+  },
+  "dependencies": {
+    "@types/express": "^4.17.8"
+  }
+}
