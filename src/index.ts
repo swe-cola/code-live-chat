@@ -1,7 +1,12 @@
+import dotenv from 'dotenv';
+import fs from 'fs';
+import https from 'https';
 import express from 'express';
 import cors from 'cors';
 import { Socket } from 'socket.io';
 const SocketIO = require('socket.io');
+
+dotenv.config();
 
 type DocID = string;
 type ClientID = string;
@@ -18,8 +23,18 @@ const PORT = 4000;
 const app = express();
 app.use(cors());
 
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+const privateKey = fs.readFileSync(process.env.PRIVATE_KEY as string, 'utf8');
+const certificate = fs.readFileSync(process.env.CERTIFICATE as string, 'utf8');
+const ca = fs.readFileSync(process.env.CA as string, 'utf8');
+
+const credentials = {
+    key: privateKey,
+    cert: certificate,
+    ca: ca,
+};
+
+const server = https.createServer(credentials, app).listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
 
 const io = SocketIO(server, {
