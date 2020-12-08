@@ -143,47 +143,63 @@ class VoicePeerMultimap{
     return [...this.multimap[idx]]
   }
 }
-const map_d2s:VoicePeerMultimap = new VoicePeerMultimap();
-const map_s2d:VoicePeerMultimap = new VoicePeerMultimap();
-const map_c2s:{[cid:string]:string}={};
-const map_s2n:{[cid:string]:string}={};
-const sockets:{[sid:string]:Socket} = {};
-type RTC_JSON_join = {did:string;cid:string;nick:string};
-type RTC_JSON_whois = {sid:string};
-type RTC_JSON_fwd = {sid:string;[other:string]:any};
 
+// Notation:
+// d for document ID
+// c for client ID
+// n for Nickname
+// s for socket
+type ClientDocumentID = string;
+type Nickname = string;
+type RTC_JSON_join = {did:string;cid:string;nick:string};
+type RTC_JSON_whois = {cid:string};
+type RTC_JSON_nick = {new_nick:string};
+type RTC_JSON_fwd = {cid:string;[other:string]:any};
+
+const map_d2c:VoicePeerMultimap = new VoicePeerMultimap();
+const map_c2d:VoicePeerMultimap = new VoicePeerMultimap();
+const map_cd2n:{[cd:string]:Nickname}={};
+const map_cd2s:{[cd:string]:Socket} = {};
+
+var to_cd = function(cid:ClientID, did:DocID){
+  return cid+did;
+}
+
+var debugout= function(...args:any[]){
+  console.log(...args);
+}
 io.on('connection', (socket: Socket) => {
-  const sid:SocketID = socket.id;
   var joined:boolean = false;
   var did:DocID ='';
   var cid:ClientID ='';
-
+  var cdid:ClientDocumentID = '';
 
   const register_forward_callback = (cmd:string)=>{
     socket.on(cmd, (data:RTC_JSON_fwd)=>{
-      const peer_sid:SocketID = data['sid'];
-      if(!map_s2d.has(peer_sid,did))
+      const peer_cid:ClientID = data['cid'];
+      if(!map_c2d.has(peer_cid,did))
         return;
-      data['sid'] = sid;
-      sockets[peer_sid].emit(cmd,data);
+      data['cid'] = cid;
+      map_cd2s[to_cd(peer_cid,did)].emit(cmd,data);
+      debugout(`forward ${cmd} from ${cid} to ${peer_cid}.`)
     })
   }
   const on_peer_quit = ()=>{
     if(!joined)
       return;
     
-      map_d2s.delete(did,sid);
-      map_s2d.delete(sid,did);
-      if(sid==map_c2s[cid])
-        delete map_c2s[cid];
-      joined=false;
-      
-      map_d2s.forEach(did,(peer_sid:SocketID)=>{
-        sockets[peer_sid].emit("peer del",sid);
+    // if this connection is valid
+    if(map_cd2s[cdid]==socket){
+      map_d2c.delete(did,cid);
+      map_c2d.delete(cid,did);
+      map_d2c.forEach(did,(peer_cid:SocketID)=>{
+        map_cd2s[to_cd(peer_cid,did)].emit("peer del",cid);
       });
-      console.log(`vc quit: peer ${sid} / doc ${did}`)
-      delete sockets[sid];
-      delete map_s2n[sid];
+      delete map_cd2s[cdid];
+      delete map_cd2n[cdid];
+    }
+    joined=false;
+    debugout(`peer ${cid} quit from ${did}.`)
   }
 
   register_forward_callback('rtc offer');
@@ -192,44 +208,61 @@ io.on('connection', (socket: Socket) => {
 
   socket.on('peer list',()=>{
     
-    socket.emit("result peer list", map_d2s.getList(did));
+    socket.emit("result peer list", map_d2c.getList(did));
+    // debugout(`peer ${cid} request list of peers in ${did}, and it was [${map_d2c.getList(did)}]`)
+
+  });
+  
+  socket.on('peer rename',(data:RTC_JSON_nick)=>{
+    if(map_cd2n[cdid] == data.new_nick) return;
+    
+    map_cd2n[cdid] = data.new_nick;
+    map_d2c.forEach(did,(peer_cid:ClientID)=>{
+      map_cd2s[to_cd(peer_cid,did)].emit("peer rename",cid);
+    })
+    debugout(`peer ${cid} renamed in ${did}.`)
   });
   socket.on('peer join',(data:RTC_JSON_join)=>{
     if(joined)
       return;
     
-    sockets[sid] = socket;
     did = data['did'];
     cid = data['cid'];
+    cdid = to_cd(cid,did);
     const nick = data['nick'];
-    var peers = map_d2s.getSet(did);
-    if((cid in map_c2s) && (map_c2s[cid] in sockets)){
-      var prev_sid:SocketID = map_c2s[cid];
-      map_d2s.forEach(did,(peer_sid:SocketID)=>{
-        sockets[peer_sid].emit("peer kick",prev_sid);
-        peers.delete(prev_sid);
+    const already_joined = cdid in map_cd2s;
+
+    if(already_joined){
+      map_d2c.forEach(did,(peer_cid:ClientID)=>{
+        map_cd2s[to_cd(peer_cid,did)].emit("peer kick",cid);
       })
+      debugout(`kicked ${cid} from ${did}.`)
     }
-    map_d2s.forEach(did,(peer_sid:SocketID)=>{
-      sockets[peer_sid].emit("peer new",sid);
+    else{
+      map_d2c.add(did,cid);
+      map_c2d.add(cid,did);
+    }
+    map_cd2s[cdid] = socket;
+    map_cd2n[cdid] = nick;
+    map_d2c.forEach(did,(peer_cid:ClientID)=>{
+      map_cd2s[to_cd(peer_cid,did)].emit("peer new",cid);
     })
-    map_d2s.add(did,sid);
-    map_s2d.add(sid,did);
-
-    map_c2s[cid]=sid;
-    map_s2n[sid]=nick;
     joined=true;
-    peers.add(sid);
-
-    socket.emit("result peer join", {me:sid,list:[...peers]});
-    console.log(`vc join: peer ${sid} / nick ${nick} / doc ${did}`)
+    
+    const peers = map_d2c.getSet(did);
+    socket.emit("result peer join", {me:cid,list:[...peers]});
+    debugout(`peer ${cid}(aka ${nick}) joined in ${did}. Current peers: [${[...peers]}]`)
   });
   socket.on('peer whois',(data:RTC_JSON_whois)=>{
     if(!joined)
       return;
-    const query_sid:string = data['sid'];
-    var query_nick:string = map_s2n[query_sid];
-    socket.emit("result peer whois", {sid:query_sid,nick:query_nick})
+    const query_cid:ClientID = data['cid'];
+    const query_cdid:ClientDocumentID = to_cd(query_cid,did);
+    if(query_cdid in map_cd2n){
+      const query_nick:Nickname = map_cd2n[query_cdid];
+      socket.emit("result peer whois", {cid:query_cid,nick:query_nick})
+      debugout(`peer ${cid} request nickname of ${query_cid} in ${did}, and it was ${query_nick}.`)
+    }
   })
   socket.on('peer quit',on_peer_quit);
   socket.on('disconnect',on_peer_quit);
